@@ -26,4 +26,9 @@ jobs:
               --head kale-dev \
               --title "Production Release" \
               --body "Automated PR from kale-dev. Review differences before merging."
+          else
+            echo "PR is already open. Updating the PR..."
+
+            EXISTING_PR = $(gh pr list --base dev --head kale-dev --json url jq '.[0].url')
+            echo "Review the updated PR here: [$EXISTING_PR]($EXISTING_PR)"
           fi
