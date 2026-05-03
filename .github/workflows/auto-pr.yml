@@ -1,0 +1,34 @@
+name: Auto-Create PR
+
+on:
+  push:
+    branches:
+      - kale-dev
+
+permissions:
+  contents: read
+  pull-requests: write
+      
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check and Create PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_EXISTS=$(gh pr list --base dev --head kale-dev --json number --jq 'length')
+          if [ "$PR_EXISTS" -eq 0 ]; then
+            echo "No PR found. Creating a new PR..."
+            gh pr create \
+              --base dev \
+              --head kale-dev \
+              --title "Production Release" \
+              --body "Automated PR from kale-dev. Review differences before merging."
+          else
+            echo "PR is already open. Updating the PR..."
+
+            EXISTING_PR=$(gh pr list --base dev --head kale-dev --json url --jq '.[0].url')
+            echo "Review the updated PR here: $EXISTING_PR"
+          fi
