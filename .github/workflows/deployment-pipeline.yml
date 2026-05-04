@@ -22,7 +22,7 @@ jobs:
             
             - name: Create and push release branch
               run: |
-                BRANCH_NAME = "release-pr-${{ github.event.pull_request.number }}"
+                BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
                 echo "Cutting new release branch: $BRANCH_NAME"
 
                 git config user.name "github-actions[bot]"
