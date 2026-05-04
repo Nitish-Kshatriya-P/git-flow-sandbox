@@ -1,104 +1,120 @@
 name: Deployment Flow
 
 on:
-    pull_request:
-        types: [closed]
-        branches:
-            - dev
+  pull_request:
+    types: [closed]
 
 permissions:
-    contents: write
+  contents: write
 
 jobs:
-    create-and-build-branch:
-        if: github.event.pull_request.merged == true
-        runs-on: ubuntu-latest
-        steps:
-            - name: Download dev branch code
-              uses: actions/checkout@v4
-              with:
-                ref: dev
+  create-and-build-branch:
+      if: github.event.pull_request.merged == true
+      runs-on: ubuntu-latest
+      steps:
+          - name: Download target branch code
+            uses: actions/checkout@v4
+            with:
+              ref: ${{ github.base_ref }}
+              fetch-depth: 0
 
-            - name: Create and push release branch
-              run: |
-                BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
-                echo "Cutting new release branch: $BRANCH_NAME"
+          - name: Check and Rebase with Target Branch
+            run: |
+              TARGET_BRANCH=${{ github.base_ref }}
+              
+              echo "Fetching the latest $TARGET_BRANCH branch..."
+              git fetch origin $TARGET_BRANCH
 
-                git config user.name "github-actions[bot]"
-                git config user.email "github-actions[bot]@users.noreply.github.com"
-
-                git checkout -b $BRANCH_NAME
-                git push origin $BRANCH_NAME
-            
-            - name: Setup Node.js
-              uses: actions/setup-node@v4
-              with:
-                node-version: '20'
-
-            - name: Install Dependencies
-              run: |
-                echo "Installing dependencies"
-                npm install
-            
-            - name: Run Vite Build Check
-              run: |
-                echo "Running Vite build for testing environment"
-
-                if ! npm run build; then
-                  echo "ERROR: Vite build broke! Halting testing deployment."
+              echo "🔍 Checking if current branch is up-to-date with $TARGET_BRANCH..."
+              
+              if git merge-base --is-ancestor origin/$TARGET_BRANCH HEAD; then
+                echo "Code is already perfectly in-line with $TARGET_BRANCH! Skipping rebase."
+              else
+                echo "$TARGET_BRANCH has new changes. Attempting to rebase current code onto $TARGET_BRANCH..."
+                
+                # Dynamically rebase against the target branch
+                if ! git rebase origin/$TARGET_BRANCH; then
+                  echo "ERROR: Merge conflict detected during rebase!"
+                  echo "The bot cannot resolve conflicts automatically."
+                  echo "Please manually rebase this branch with $TARGET_BRANCH locally, resolve conflicts, and try again."
+                  
+                  git rebase --abort
                   exit 1
                 fi
-
-                echo "Build successful! Proceeding to deployment."
-
-            - name: Upload Artifact
-              uses: actions/upload-artifact@v4
-              with: 
-                name: vite-build-artifact
-                path: dist/
-                retention-days: 1
                 
-    deploy-testing:
-        runs-on: ubuntu-latest
-        needs: create-and-build-branch
-        environment: testing
-        steps:
-            - name: Download Release branch code
-              uses: actions/checkout@v4
-              with:
-                ref: release-pr-${{ github.event.pull_request.number }}
+                echo "Rebase successful! Code is now up-to-date with $TARGET_BRANCH."
+              fi
+          
+          - name: Setup Node.js
+            uses: actions/setup-node@v4
+            with:
+              node-version: '20'
 
-            - name: Download Build Artifact
-              uses: actions/download-artifact@v4
-              with:
-                name: vite-build-artifact
-                path: dist/
+          - name: Install Dependencies
+            run: |
+              echo "Installing dependencies"
+              npm install
+          
+          - name: Run Vite Build Check
+            run: |
+              echo "Running Vite build for testing environment"
 
-            - name: Deploying to testing env
-              if: success()
-              run: |
-                BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
-                echo "🚀 Automatically deploying $BRANCH_NAME to TESTING env..."
-    
-    deploy-production:
-        runs-on: ubuntu-latest
-        needs: deploy-testing    
-        environment: production
-        steps:
-        - name: Download Release Branch Code
-          uses: actions/checkout@v4
-          with:
-            ref: release-pr-${{ github.event.pull_request.number }}
+              if ! npm run build; then
+                echo "ERROR: Vite build broke! Halting testing deployment."
+                exit 1
+              fi
 
-        - name: Download Build Artifact
-          uses: actions/download-artifact@v4
-          with:
-            name: vite-build-artifact
-            path: dist/
-            
-        - name: Deploy to Production Environment
-          if: success()
-          run: |
-            BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
-            echo "🌍 Manual approval received!"
-            echo "Deploying $BRANCH_NAME to PRODUCTION..."
+              echo "Build successful! Proceeding to deployment."
+
+          - name: Upload Artifact
+            uses: actions/upload-artifact@v4
+            with: 
+              name: vite-build-artifact
+              path: dist/
+              retention-days: 1
+              
+  deploy-testing:
+      runs-on: ubuntu-latest
+      needs: create-and-build-branch
+      environment: testing
+      steps:
+          - name: Download Release branch code
+            uses: actions/checkout@v4
+            with:
+              ref: release-pr-${{ github.event.pull_request.number }}
+
+          - name: Download Build Artifact
+            uses: actions/download-artifact@v4
+            with:
+              name: vite-build-artifact
+              path: dist/
+
+          - name: Deploying to testing env
+            if: success()
+            run: |
+              BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
+              echo "Automatically deploying $BRANCH_NAME to TESTING env..."
+  
+  deploy-production:
+      if: github.base_ref == 'dev'
+      runs-on: ubuntu-latest
+      needs: deploy-testing    
+      environment: production
+      steps:
+      - name: Download Release Branch Code
+        uses: actions/checkout@v4
+        with:
+          ref: release-pr-${{ github.event.pull_request.number }}
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vite-build-artifact
+          path: dist/
+          
+      - name: Deploy to Production Environment
+        if: success()
+        run: |
+          BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
+          echo "Manual approval received!"
+          echo "Deploying $BRANCH_NAME to PRODUCTION..."
