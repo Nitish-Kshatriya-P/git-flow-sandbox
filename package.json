@@ -1,0 +1,7 @@
+{
+  "name": "sandbox",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "echo 'Simulating Vite Build successful!'"
+  }
+}
