@@ -2,6 +2,6 @@
   "name": "sandbox",
   "version": "1.0.0",
   "scripts": {
-    "build": "echo 'Simulating Vite Build successful!'"
+    "build": "mkdir -p dist && echo 'Fake minified code' > dist/index.html && echo 'Simulating Vite Build successful!'"
   }
 }
