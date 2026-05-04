@@ -78,10 +78,10 @@ jobs:
       needs: create-and-build-branch
       environment: testing
       steps:
-          - name: Download Release branch code
-            uses: actions/checkout@v4
-            with:
-              ref: release-pr-${{ github.event.pull_request.number }}
+          # - name: Download Release branch code
+          #   uses: actions/checkout@v4
+          #   with:
+          #     ref: release-pr-${{ github.event.pull_request.number }}
 
           - name: Download Build Artifact
             uses: actions/download-artifact@v4
@@ -101,10 +101,10 @@ jobs:
       needs: deploy-testing    
       environment: production
       steps:
-      - name: Download Release Branch Code
-        uses: actions/checkout@v4
-        with:
-          ref: release-pr-${{ github.event.pull_request.number }}
+      # - name: Download Release Branch Code
+      #   uses: actions/checkout@v4
+      #   with:
+      #     ref: release-pr-${{ github.event.pull_request.number }}
 
       - name: Download Build Artifact
         uses: actions/download-artifact@v4
