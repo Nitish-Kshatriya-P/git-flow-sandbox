@@ -1,11 +1,10 @@
 name: Deployment Flow
 
 on:
-  # Automated trigger for Testing
   pull_request:
     types: [closed]
     
-  # Manual trigger for Production with interactive inputs
+  # Manual trigger for Production 
   workflow_dispatch:
     inputs:
       deploy_mode:
@@ -25,9 +24,6 @@ permissions:
   contents: write
 
 jobs:
-  # ---------------------------------------------------------
-  # 1. AUTOMATED FLOW (Runs only on PR Merge)
-  # ---------------------------------------------------------
   build-branch:
       if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
       runs-on: ubuntu-latest
@@ -52,7 +48,7 @@ jobs:
             run: |
               echo "Running Vite build for testing environment"
               if ! npm run build; then
-                echo "ERROR: Vite build broke! Halting testing deployment."
+                echo "ERROR: Vite build broke! Halting deployment."
                 exit 1
               fi
               echo "Build successful! Proceeding to deployment."
@@ -79,17 +75,22 @@ jobs:
         - name: Deploying to testing env
           run: |
             BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
-            echo "Automatically deploying $BRANCH_NAME to TESTING env..."
+            echo "Automatically deploying $BRANCH_NAME to TESTING env (Branch: ${{ github.base_ref }})..."
   
-  # ---------------------------------------------------------
-  # 2. MANUAL PRODUCTION FLOW (Runs only via workflow_dispatch)
-  # ---------------------------------------------------------
   deploy-production:
-      if: github.event_name == 'workflow_dispatch'
       runs-on: ubuntu-latest
-      environment: production # Still requires environment approval if configured in repo settings
+      needs: deploy-testing
+      environment: production 
+      if: |
+        always() && 
+        !cancelled() &&
+        (
+          (github.event_name == 'workflow_dispatch') || 
+          (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref == 'dev' && needs.deploy-testing.result == 'success')
+        )
       steps:
         - name: Validate Inputs
+          if: github.event_name == 'workflow_dispatch'
           run: |
             if [ "${{ inputs.deploy_mode }}" == "Cherry-pick" ] && [ -z "${{ inputs.commit_sha }}" ]; then
               echo "ERROR: You selected 'Cherry-pick' but did not provide any commit SHAs."
@@ -99,63 +100,70 @@ jobs:
         - name: Checkout Code (Target Branch)
           uses: actions/checkout@v4
           with:
-            ref: 'dev' # Or main/master, depending on what you deploy to prod
+            ref: 'dev' 
             fetch-depth: 0
 
         - name: Setup Git for Cherry-Pick
-          if: inputs.deploy_mode == 'Cherry-pick'
+          if: github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'Cherry-pick'
           run: |
             git config --global user.name "github-actions[bot]"
             git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
         - name: Apply Cherry-Picks
-          if: inputs.deploy_mode == 'Cherry-pick'
+          if: github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'Cherry-pick'
           run: |
             echo "Preparing to cherry-pick commits: ${{ inputs.commit_sha }}"
             
-            # Use the unique GitHub run ID for the branch name to avoid spaces/special characters
             git checkout -b prod-cherry-pick-${{ github.run_id }}
-            
-            # Replace any commas with spaces to handle both format types smoothly
             COMMIT_SHAS=$(echo "${{ inputs.commit_sha }}" | tr ',' ' ')
             
-            # Loop through each SHA and apply it
             for SHA in $COMMIT_SHAS; do
               echo "----------------------------------------"
               echo "Evaluating commit: $SHA"
               
               if git rev-list --parents -n 1 $SHA | grep -q " .* "; then
                 echo "Merge commit detected! Applying with '-m 1' to follow the mainline branch."
-                git cherry-pick -m 1 $SHA
+                git cherry-pick -m 1 --empty=drop $SHA
               else
                 echo "Standard commit detected. Applying normal cherry-pick."
-                git cherry-pick $SHA
+                git cherry-pick --empty=drop $SHA
               fi
             done
             
             echo "----------------------------------------"
             echo "All cherry-picks applied successfully!"
             
-        - name: Setup Node.js (Rebuild for Prod)
+        - name: Download Build Artifact (PR Merge Only)
+          if: github.event_name == 'pull_request'
+          uses: actions/download-artifact@v4
+          with:
+            name: vite-build-artifact
+            path: dist/
+
+        - name: Setup Node.js (Manual Trigger Only)
+          if: github.event_name == 'workflow_dispatch'
           uses: actions/setup-node@v4
           with:
             node-version: '24'
 
-        - name: Install and Build
+        - name: Install and Build (Manual Trigger Only)
+          if: github.event_name == 'workflow_dispatch'
           run: |
+            MODE="${{ inputs.deploy_mode }}"
             echo "Running fresh build for Production ($MODE mode)..."
             npm install
             npm run build
-          env:
-            MODE: ${{ inputs.deploy_mode }}
-
+            
         - name: Deploy to Production Environment
           run: |
+            MODE="${{ inputs.deploy_mode }}"
+            if [ -z "$MODE" ]; then MODE="All"; fi
+            
             echo "Deploying to PRODUCTION..."
-            echo "Mode: ${{ inputs.deploy_mode }}"
-            if [ "${{ inputs.deploy_mode }}" == "Cherry-pick" ]; then
+            echo "Mode: $MODE"
+            
+            if [ "$MODE" == "Cherry-pick" ]; then
               echo "Deployed specific commits: ${{ inputs.commit_sha }}"
             else
               echo "Deployed all standard changes."
             fi
-            # Add your production deployment commands here (e.g., AWS, Vercel, SCP)
