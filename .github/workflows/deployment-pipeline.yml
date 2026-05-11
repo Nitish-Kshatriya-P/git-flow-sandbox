@@ -126,10 +126,10 @@ jobs:
               
               if git rev-list --parents -n 1 $SHA | grep -q " .* "; then
                 echo "Merge commit detected! Applying with '-m 1' to follow the mainline branch."
-                git cherry-pick -m 1 $SHA
+                git cherry-pick -m 1 --empty=drop $SHA
               else
                 echo "Standard commit detected. Applying normal cherry-pick."
-                git cherry-pick $SHA
+                git cherry-pick --empty=drop $SHA
               fi
             done
             
