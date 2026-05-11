@@ -11,13 +11,13 @@ on:
       deploy_mode:
         description: 'Deploy all changes or cherry-pick?'
         required: true
-        default: 'all'
+        default: 'All'
         type: choice
         options:
-          - all
-          - cherry-pick
+          - All
+          - Cherry-pick
       commit_sha:
-        description: 'Commit SHA is needed for cherry-pick'
+        description: 'Commit SHAs for cherry-pick (comma or space separated)'
         required: false
         type: string
 
@@ -91,8 +91,8 @@ jobs:
       steps:
         - name: Validate Inputs
           run: |
-            if [ "${{ inputs.deploy_mode }}" == "cherry-pick" ] && [ -z "${{ inputs.commit_sha }}" ]; then
-              echo "ERROR: You selected 'cherry-pick' but did not provide a commit SHA."
+            if [ "${{ inputs.deploy_mode }}" == "Cherry-pick" ] && [ -z "${{ inputs.commit_sha }}" ]; then
+              echo "ERROR: You selected 'Cherry-pick' but did not provide any commit SHAs."
               exit 1
             fi
             
@@ -103,18 +103,38 @@ jobs:
             fetch-depth: 0
 
         - name: Setup Git for Cherry-Pick
-          if: inputs.deploy_mode == 'cherry-pick'
+          if: inputs.deploy_mode == 'Cherry-pick'
           run: |
             git config --global user.name "github-actions[bot]"
             git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-        - name: Apply Cherry-Pick
-          if: inputs.deploy_mode == 'cherry-pick'
+        - name: Apply Cherry-Picks
+          if: inputs.deploy_mode == 'Cherry-pick'
           run: |
-            echo "Cherry-picking commit: ${{ inputs.commit_sha }}..."
-            # Create a temporary branch for the cherry-pick deployment
-            git checkout -b prod-cherry-pick-${{ inputs.commit_sha }}
-            git cherry-pick ${{ inputs.commit_sha }}
+            echo "Preparing to cherry-pick commits: ${{ inputs.commit_sha }}"
+            
+            # Use the unique GitHub run ID for the branch name to avoid spaces/special characters
+            git checkout -b prod-cherry-pick-${{ github.run_id }}
+            
+            # Replace any commas with spaces to handle both format types smoothly
+            COMMIT_SHAS=$(echo "${{ inputs.commit_sha }}" | tr ',' ' ')
+            
+            # Loop through each SHA and apply it
+            for SHA in $COMMIT_SHAS; do
+              echo "----------------------------------------"
+              echo "Evaluating commit: $SHA"
+              
+              if git rev-list --parents -n 1 $SHA | grep -q " .* "; then
+                echo "Merge commit detected! Applying with '-m 1' to follow the mainline branch."
+                git cherry-pick -m 1 $SHA
+              else
+                echo "Standard commit detected. Applying normal cherry-pick."
+                git cherry-pick $SHA
+              fi
+            done
+            
+            echo "----------------------------------------"
+            echo "All cherry-picks applied successfully!"
             
         - name: Setup Node.js (Rebuild for Prod)
           uses: actions/setup-node@v4
@@ -133,8 +153,8 @@ jobs:
           run: |
             echo "Deploying to PRODUCTION..."
             echo "Mode: ${{ inputs.deploy_mode }}"
-            if [ "${{ inputs.deploy_mode }}" == "cherry-pick" ]; then
-              echo "Deployed specific commit: ${{ inputs.commit_sha }}"
+            if [ "${{ inputs.deploy_mode }}" == "Cherry-pick" ]; then
+              echo "Deployed specific commits: ${{ inputs.commit_sha }}"
             else
               echo "Deployed all standard changes."
             fi
