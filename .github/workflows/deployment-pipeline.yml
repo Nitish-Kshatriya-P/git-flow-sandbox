@@ -1,15 +1,35 @@
 name: Deployment Flow
 
 on:
+  # Automated trigger for Testing
   pull_request:
     types: [closed]
+    
+  # Manual trigger for Production with interactive inputs
+  workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: 'Deploy all changes or cherry-pick?'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - cherry-pick
+      commit_sha:
+        description: 'Commit SHA is needed for cherry-pick'
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  build-and-rebase-branch:
-      if: github.event.pull_request.merged == true
+  # ---------------------------------------------------------
+  # 1. AUTOMATED FLOW (Runs only on PR Merge)
+  # ---------------------------------------------------------
+  build-branch:
+      if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
       runs-on: ubuntu-latest
       steps:
           - name: Download target branch code
@@ -17,38 +37,11 @@ jobs:
             with:
               ref: ${{ github.base_ref }}
               fetch-depth: 0
-
-          - name: Check and Rebase with Target Branch
-            run: |
-              TARGET_BRANCH=${{ github.base_ref }}
-              
-              echo "Fetching the latest $TARGET_BRANCH branch..."
-              git fetch origin $TARGET_BRANCH
-
-              echo "🔍 Checking if current branch is up-to-date with $TARGET_BRANCH..."
-              
-              if git merge-base --is-ancestor origin/$TARGET_BRANCH HEAD; then
-                echo "Code is already perfectly in-line with $TARGET_BRANCH! Skipping rebase."
-              else
-                echo "$TARGET_BRANCH has new changes. Attempting to rebase current code onto $TARGET_BRANCH..."
-                
-                # Dynamically rebase against the target branch
-                if ! git rebase origin/$TARGET_BRANCH; then
-                  echo "ERROR: Merge conflict detected during rebase!"
-                  echo "The bot cannot resolve conflicts automatically."
-                  echo "Please manually rebase this branch with $TARGET_BRANCH locally, resolve conflicts, and try again."
-                  
-                  git rebase --abort
-                  exit 1
-                fi
-                
-                echo "Rebase successful! Code is now up-to-date with $TARGET_BRANCH."
-              fi
           
           - name: Setup Node.js
             uses: actions/setup-node@v4
             with:
-              node-version: '20'
+              node-version: '24'
 
           - name: Install Dependencies
             run: |
@@ -58,12 +51,10 @@ jobs:
           - name: Run Vite Build Check
             run: |
               echo "Running Vite build for testing environment"
-
               if ! npm run build; then
                 echo "ERROR: Vite build broke! Halting testing deployment."
                 exit 1
               fi
-
               echo "Build successful! Proceeding to deployment."
 
           - name: Upload Artifact
@@ -74,47 +65,77 @@ jobs:
               retention-days: 1
               
   deploy-testing:
+      if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
       runs-on: ubuntu-latest
-      needs: build-and-rebase-branch
+      needs: build-branch
       environment: testing
       steps:
-          # - name: Download Release branch code
-          #   uses: actions/checkout@v4
-          #   with:
-          #     ref: release-pr-${{ github.event.pull_request.number }}
+        - name: Download Build Artifact
+          uses: actions/download-artifact@v4
+          with:
+            name: vite-build-artifact
+            path: dist/
 
-          - name: Download Build Artifact
-            uses: actions/download-artifact@v4
-            with:
-              name: vite-build-artifact
-              path: dist/
-
-          - name: Deploying to testing env
-            if: success()
-            run: |
-              BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
-              echo "Automatically deploying $BRANCH_NAME to TESTING env..."
+        - name: Deploying to testing env
+          run: |
+            BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
+            echo "Automatically deploying $BRANCH_NAME to TESTING env..."
   
+  # ---------------------------------------------------------
+  # 2. MANUAL PRODUCTION FLOW (Runs only via workflow_dispatch)
+  # ---------------------------------------------------------
   deploy-production:
-      if: github.base_ref == 'dev'
+      if: github.event_name == 'workflow_dispatch'
       runs-on: ubuntu-latest
-      needs: deploy-testing    
-      environment: production
+      environment: production # Still requires environment approval if configured in repo settings
       steps:
-      # - name: Download Release Branch Code
-      #   uses: actions/checkout@v4
-      #   with:
-      #     ref: release-pr-${{ github.event.pull_request.number }}
+        - name: Validate Inputs
+          run: |
+            if [ "${{ inputs.deploy_mode }}" == "cherry-pick" ] && [ -z "${{ inputs.commit_sha }}" ]; then
+              echo "ERROR: You selected 'cherry-pick' but did not provide a commit SHA."
+              exit 1
+            fi
+            
+        - name: Checkout Code (Target Branch)
+          uses: actions/checkout@v4
+          with:
+            ref: 'dev' # Or main/master, depending on what you deploy to prod
+            fetch-depth: 0
 
-      - name: Download Build Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: vite-build-artifact
-          path: dist/
-          
-      - name: Deploy to Production Environment
-        if: success()
-        run: |
-          BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
-          echo "Manual approval received!"
-          echo "Deploying $BRANCH_NAME to PRODUCTION..."
+        - name: Setup Git for Cherry-Pick
+          if: inputs.deploy_mode == 'cherry-pick'
+          run: |
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+        - name: Apply Cherry-Pick
+          if: inputs.deploy_mode == 'cherry-pick'
+          run: |
+            echo "Cherry-picking commit: ${{ inputs.commit_sha }}..."
+            # Create a temporary branch for the cherry-pick deployment
+            git checkout -b prod-cherry-pick-${{ inputs.commit_sha }}
+            git cherry-pick ${{ inputs.commit_sha }}
+            
+        - name: Setup Node.js (Rebuild for Prod)
+          uses: actions/setup-node@v4
+          with:
+            node-version: '24'
+
+        - name: Install and Build
+          run: |
+            echo "Running fresh build for Production ($MODE mode)..."
+            npm install
+            npm run build
+          env:
+            MODE: ${{ inputs.deploy_mode }}
+
+        - name: Deploy to Production Environment
+          run: |
+            echo "Deploying to PRODUCTION..."
+            echo "Mode: ${{ inputs.deploy_mode }}"
+            if [ "${{ inputs.deploy_mode }}" == "cherry-pick" ]; then
+              echo "Deployed specific commit: ${{ inputs.commit_sha }}"
+            else
+              echo "Deployed all standard changes."
+            fi
+            # Add your production deployment commands here (e.g., AWS, Vercel, SCP)
