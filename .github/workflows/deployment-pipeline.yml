@@ -132,6 +132,11 @@ jobs:
             
             echo "----------------------------------------"
             echo "All cherry-picks applied successfully!"
+
+            echo "PROOF OF HISTORY:"
+            git log -n 5 --oneline
+            echo "PROOF OF FILES:"
+            ls -la
             
         - name: Download Build Artifact (PR Merge Only)
           if: github.event_name == 'pull_request'
