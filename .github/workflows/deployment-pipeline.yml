@@ -14,6 +14,7 @@ on:
         type: choice
         options:
           - All
+          - Cherry-pick with history
           - Cherry-pick
       commit_sha:
         description: 'Commit SHAs for cherry-pick (comma or space separated)'
@@ -92,8 +93,8 @@ jobs:
         - name: Validate Inputs
           if: github.event_name == 'workflow_dispatch'
           run: |
-            if [ "${{ inputs.deploy_mode }}" == "Cherry-pick" ] && [ -z "${{ inputs.commit_sha }}" ]; then
-              echo "ERROR: You selected 'Cherry-pick' but did not provide any commit SHAs."
+            if [[ "${{ inputs.deploy_mode }}" == *"Cherry-pick"* ]] && [ -z "${{ inputs.commit_sha }}" ]; then
+              echo "ERROR: You selected a Cherry-pick mode but did not provide any commit SHAs."
               exit 1
             fi
             
@@ -103,13 +104,13 @@ jobs:
             ref: 'dev' 
             fetch-depth: 0
 
-        - name: Setup Git for Cherry-Pick
-          if: github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'Cherry-pick'
+        - name: Setup Git for Cherry-Pick & Merging
+          if: github.event_name == 'workflow_dispatch' && contains(inputs.deploy_mode, 'Cherry-pick')
           run: |
             git config --global user.name "github-actions[bot]"
             git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-        - name: Apply Cherry-Picks
+        - name: Apply Cherry-Picks (Isolated Commits)
           if: github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'Cherry-pick'
           run: |
             echo "Preparing to cherry-pick commits: ${{ inputs.commit_sha }}"
@@ -133,10 +134,32 @@ jobs:
             echo "----------------------------------------"
             echo "All cherry-picks applied successfully!"
 
-            echo "PROOF OF HISTORY:"
+            echo "PROOF OF HISTORY OF LAST 5 COMMITS:"
             git log -n 5 --oneline
             echo "PROOF OF FILES:"
             ls -la
+
+        - name: Apply Commits and History (Merge)
+          if: github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'Cherry-pick with history'
+          run: |
+            echo "Preparing to merge commit and its history: ${{ inputs.commit_sha }}"
+            
+            git checkout -b prod-merge-${{ github.run_id }}
+            
+            TARGET_SHA=$(echo "${{ inputs.commit_sha }}" | tr -d ' ')
+            
+            echo "Merging commit $TARGET_SHA and all its previous history..."
+            
+            if ! git merge $TARGET_SHA --no-edit; then
+              echo "ERROR: Merge conflict detected! You cannot safely merge this history automatically."
+              exit 1
+            fi
+            
+            echo "----------------------------------------"
+            echo "Commit and all previous history successfully merged!"
+            
+            echo "History of the past 5 commits are shown:"
+            git log -n 5 --oneline
             
         - name: Download Build Artifact (PR Merge Only)
           if: github.event_name == 'pull_request'
@@ -167,7 +190,7 @@ jobs:
             echo "Deploying to PRODUCTION..."
             echo "Mode: $MODE"
             
-            if [ "$MODE" == "Cherry-pick" ]; then
+            if [[ "$MODE" == *"Cherry-pick"* ]]; then
               echo "Deployed specific commits: ${{ inputs.commit_sha }}"
             else
               echo "Deployed all standard changes."
