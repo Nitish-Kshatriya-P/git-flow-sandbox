@@ -23,6 +23,7 @@ on:
 
 permissions:
   contents: write
+  issues: write  # <-- REQUIRED for the approval action to create an issue
 
 jobs:
   build-branch:
@@ -88,6 +89,20 @@ jobs:
           (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref == 'dev' && needs.deploy-testing.result == 'success')
         )
       steps:
+        # --- NEW MANUAL APPROVAL STEP ---
+        - name: Await Manual Approval
+          if: github.event_name == 'pull_request' # Only require approval for automated runs
+          uses: trstringer/manual-approval@v1
+          timeout-minutes: 60  # Fails the workflow if not approved in 1 hour (saves money)
+          with:
+            secret: ${{ github.token }}
+            approvers: "your-github-username, another-username" # Replace with actual GitHub usernames
+            minimum-approvals: 1
+            issue-title: "🚨 Production Deployment Approval Required"
+            issue-body: "Please approve or deny the deployment to production by replying 'Approve' or 'Deny'."
+            exclude-workflow-initiator-as-approver: false
+        # --------------------------------
+
         - name: Validate Inputs
           if: github.event_name == 'workflow_dispatch'
           run: |
@@ -183,4 +198,3 @@ jobs:
         - name: Deploy to Production Environment
           run: |
             echo "deploying in prod...."
-          
