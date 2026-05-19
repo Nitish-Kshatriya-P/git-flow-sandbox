@@ -96,7 +96,7 @@ jobs:
           timeout-minutes: 60  # Fails the workflow if not approved in 1 hour (saves money)
           with:
             secret: ${{ github.token }}
-            approvers: "your-github-username, another-username" # Replace with actual GitHub usernames
+            approvers: "Nitish-Kshatriya-P" # Replace with actual GitHub usernames
             minimum-approvals: 1
             issue-title: "🚨 Production Deployment Approval Required"
             issue-body: "Please approve or deny the deployment to production by replying 'Approve' or 'Deny'."
