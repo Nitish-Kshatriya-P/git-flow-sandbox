@@ -1,3 +1,212 @@
+# name: Deployment Flow
+
+# on:
+#   pull_request:
+#     types: [closed]
+    
+#   # Manual trigger for Production 
+#   workflow_dispatch:
+#     inputs:
+#       deploy_mode:
+#         description: 'Deploy all changes or cherry-pick?'
+#         required: true
+#         default: 'All'
+#         type: choice
+#         options:
+#           - All
+#           - Cherry-pick with history
+#           - Cherry-pick
+#       commit_sha:
+#         description: 'Commit SHAs for cherry-pick (comma or space separated)'
+#         required: false
+#         type: string
+
+# permissions:
+#   contents: write
+
+# jobs:
+#   build-branch:
+#       if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+#       runs-on: ubuntu-latest
+#       steps:
+#           - name: Download target branch code
+#             uses: actions/checkout@v4
+#             with:
+#               ref: ${{ github.base_ref }}
+#               fetch-depth: 0
+          
+#           - name: Setup Node.js
+#             uses: actions/setup-node@v4
+#             with:
+#               node-version: '24'
+
+#           - name: Install Dependencies
+#             run: |
+#               echo "Installing dependencies"
+#               npm install
+          
+#           - name: Run Vite Build Check
+#             run: |
+#               echo "Running Vite build for testing environment"
+#               if ! npm run build; then
+#                 echo "ERROR: Vite build broke! Halting deployment."
+#                 exit 1
+#               fi
+#               echo "Build successful! Proceeding to deployment."
+
+#           - name: Upload Artifact
+#             uses: actions/upload-artifact@v4
+#             with: 
+#               name: vite-build-artifact
+#               path: dist/
+#               retention-days: 1
+              
+#   deploy-testing:
+#       if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+#       runs-on: ubuntu-latest
+#       needs: build-branch
+#       environment: testing
+#       steps:
+#         - name: Download Build Artifact
+#           uses: actions/download-artifact@v4
+#           with:
+#             name: vite-build-artifact
+#             path: dist/
+
+#         - name: Deploying to testing env
+#           if: success()
+#           uses:  easingthemes/ssh-deploy@v5.0.3
+#           with:
+#             REMOTE_HOST: 51.79.231.192
+#             REMOTE_USER: ubuntu
+#             SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+#             SOURCE: "dist/"
+#             TARGET: /home/ubuntu/truestates-api-dev
+#             SCRIPT_BEFORE: |
+#               whoami
+#             SCRIPT_AFTER: |
+#               whoami
+#               pm2 restart /home/ubuntu/truestates-api-dev/ecosystem.config.js --only truestates-api-dev --update-env
+
+#   deploy-production:
+#       runs-on: ubuntu-latest
+#       needs: deploy-testing
+#       environment: production 
+#       if: |
+#         always() && 
+#         !cancelled() &&
+#         (
+#           (github.event_name == 'workflow_dispatch') || 
+#           (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref == 'main' && needs.deploy-testing.result == 'success')
+#         )
+#       steps:
+#         - name: Validate Inputs
+#           if: github.event_name == 'workflow_dispatch'
+#           run: |
+#             if [[ "${{ inputs.deploy_mode }}" == *"Cherry-pick"* ]] && [ -z "${{ inputs.commit_sha }}" ]; then
+#               echo "ERROR: You selected a Cherry-pick mode but did not provide any commit SHAs."
+#               exit 1
+#             fi
+            
+#         - name: Checkout Code (Target Branch)
+#           uses: actions/checkout@v4
+#           with:
+#             ref: 'main' 
+#             fetch-depth: 0
+
+#         - name: Setup Git for Cherry-Pick & Merging
+#           if: github.event_name == 'workflow_dispatch' && contains(inputs.deploy_mode, 'Cherry-pick')
+#           run: |
+#             git config --global user.name "github-actions[bot]"
+#             git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+#         - name: Apply Cherry-Picks (Isolated Commits)
+#           if: github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'Cherry-pick'
+#           run: |
+#             echo "Preparing to cherry-pick commits: ${{ inputs.commit_sha }}"
+            
+#             git checkout -b prod-cherry-pick-${{ github.run_id }}
+#             COMMIT_SHAS=$(echo "${{ inputs.commit_sha }}" | tr ',' ' ')
+            
+#             for SHA in $COMMIT_SHAS; do
+#               echo "----------------------------------------"
+#               echo "Evaluating commit: $SHA"
+              
+#               if git rev-list --parents -n 1 $SHA | grep -q " .* "; then
+#                 echo "Merge commit detected! Applying with '-m 1' to follow the mainline branch."
+#                 git cherry-pick -m 1 --empty=drop $SHA
+#               else
+#                 echo "Standard commit detected. Applying normal cherry-pick."
+#                 git cherry-pick --empty=drop $SHA
+#               fi
+#             done
+            
+#             echo "----------------------------------------"
+#             echo "All cherry-picks applied successfully!"
+
+#             echo "PROOF OF HISTORY OF LAST 5 COMMITS:"
+#             git log -n 5 --oneline
+#             echo "PROOF OF FILES:"
+#             ls -la
+
+#         - name: Apply Commits and History (Merge)
+#           if: github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'Cherry-pick with history'
+#           run: |
+#             echo "Preparing to merge commit and its history: ${{ inputs.commit_sha }}"
+            
+#             git checkout -b prod-merge-${{ github.run_id }}
+            
+#             TARGET_SHA=$(echo "${{ inputs.commit_sha }}" | tr -d ' ')
+            
+#             echo "Merging commit $TARGET_SHA and all its previous history..."
+            
+#             if ! git merge $TARGET_SHA --no-edit; then
+#               echo "ERROR: Merge conflict detected! You cannot safely merge this history automatically."
+#               exit 1
+#             fi
+            
+#             echo "----------------------------------------"
+#             echo "Commit and all previous history successfully merged!"
+            
+#             echo "History of the past 5 commits are shown:"
+#             git log -n 5 --oneline
+            
+#         - name: Download Build Artifact (PR Merge Only)
+#           if: github.event_name == 'pull_request'
+#           uses: actions/download-artifact@v4
+#           with:
+#             name: vite-build-artifact
+#             path: dist/
+
+#         - name: Setup Node.js (Manual Trigger Only)
+#           if: github.event_name == 'workflow_dispatch'
+#           uses: actions/setup-node@v4
+#           with:
+#             node-version: '24'
+
+#         - name: Install and Build (Manual Trigger Only)
+#           if: github.event_name == 'workflow_dispatch'
+#           run: |
+#             MODE="${{ inputs.deploy_mode }}"
+#             echo "Running fresh build for Production ($MODE mode)..."
+#             npm install
+#             npm run build
+            
+#         - name: Deploy to Production Environment
+#           uses: easingthemes/ssh-deploy@v5.0.3
+#           with:
+#             REMOTE_HOST: 51.79.231.192
+#             REMOTE_USER: ubuntu
+#             SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+#             SOURCE: "dist/"
+#             TARGET: /home/ubuntu/truestates-api
+#             SCRIPT_BEFORE: |
+#               whoami
+#             SCRIPT_AFTER: |
+#               whoami 
+#               pm2 restart /home/ubuntu/truestates-api/ecosystem.config.js --only truestates-api --update-env
+
+
 name: Deployment Flow
 
 on:
@@ -75,9 +284,9 @@ jobs:
 
         - name: Deploying to testing env
           run: |
-            BRANCH_NAME="release-pr-${{ github.event.pull_request.number }}"
-            echo "Automatically deploying $BRANCH_NAME to TESTING env (Branch: ${{ github.base_ref }})..."
-  
+              echo "deploying in dev...."
+         
+
   deploy-production:
       runs-on: ubuntu-latest
       needs: deploy-testing
@@ -184,14 +393,5 @@ jobs:
             
         - name: Deploy to Production Environment
           run: |
-            MODE="${{ inputs.deploy_mode }}"
-            if [ -z "$MODE" ]; then MODE="All"; fi
-            
-            echo "Deploying to PRODUCTION..."
-            echo "Mode: $MODE"
-            
-            if [[ "$MODE" == *"Cherry-pick"* ]]; then
-              echo "Deployed specific commits: ${{ inputs.commit_sha }}"
-            else
-              echo "Deployed all standard changes."
-            fi
+            echo "deploying in prod...."
+          
