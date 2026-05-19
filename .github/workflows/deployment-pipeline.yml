@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [closed]
     
-  # Manual trigger for Production 
+  # Manual trigger for  
   workflow_dispatch:
     inputs:
       deploy_mode:
