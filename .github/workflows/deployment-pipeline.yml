@@ -301,7 +301,7 @@ jobs:
         !cancelled() &&
         (
           (github.event_name == 'workflow_dispatch') || 
-          (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref == 'main' && needs.deploy-testing.result == 'success')
+          (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref == 'dev' && needs.deploy-testing.result == 'success')
         )
       steps:
         - name: Validate Inputs
@@ -315,7 +315,7 @@ jobs:
         - name: Checkout Code (Target Branch)
           uses: actions/checkout@v4
           with:
-            ref: 'main' 
+            ref: 'dev' 
             fetch-depth: 0
 
         - name: Setup Git for Cherry-Pick & Merging
