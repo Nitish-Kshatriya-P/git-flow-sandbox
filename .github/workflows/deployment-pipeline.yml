@@ -203,7 +203,7 @@ name: Deployment Flow
 
 on:
   pull_request:
-    types: [closed]
+    types: [closed, labeled]
     
   # Manual trigger for Production 
   workflow_dispatch:
@@ -299,8 +299,18 @@ jobs:
         always() && 
         !cancelled() &&
         (
-          (github.event_name == 'workflow_dispatch') || 
-          (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref == 'dev' && needs.deploy-testing.result == 'success')
+          (
+            github.event_name == 'pull_request' && 
+            github.event.pull_request.merged == true && 
+            github.base_ref == 'dev' && 
+            needs.deploy-testing.result == 'success' &&
+            contains(github.event.pull_request.labels.*.name, 'Approved for Prod')
+          ) 
+          ||
+          (
+            github.event_name == 'workflow_dispatch' &&
+            contains(fromJson('["your-github-handle", "senior-dev-handle"]'), github.actor)
+          )
         )
       steps:
         - name: Validate Inputs
