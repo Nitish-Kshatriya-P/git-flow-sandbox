@@ -227,7 +227,8 @@ permissions:
 
 jobs:
   build-branch:
-      if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+      # ADDED: Only run on 'closed' so it completely skips if someone just adds a label
+      if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
       runs-on: ubuntu-latest
       steps:
           - name: Download target branch code
@@ -263,7 +264,8 @@ jobs:
               retention-days: 1
               
   deploy-testing:
-      if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+      # ADDED: Only run on 'closed' so we don't deploy to dev twice
+      if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
       runs-on: ubuntu-latest
       needs: build-branch
       steps:
@@ -273,20 +275,6 @@ jobs:
             name: vite-build-artifact
             path: dist/
 
-        # - name: Deploying to testing env
-        #   if: success()
-        #   uses:  easingthemes/ssh-deploy@v5.0.3
-        #   with:
-        #     REMOTE_HOST: 51.79.231.192
-        #     REMOTE_USER: ubuntu
-        #     SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        #     SOURCE: "dist/"
-        #     TARGET: /home/ubuntu/truestates-api-dev
-        #     SCRIPT_BEFORE: |
-        #       whoami
-        #     SCRIPT_AFTER: |
-        #       whoami
-        #       pm2 restart /home/ubuntu/truestates-api-dev/ecosystem.config.js --only truestates-api-dev --update-env
         - name: Deploying to testing env
           run: |
               echo "deploying in dev...."
@@ -295,17 +283,26 @@ jobs:
       runs-on: ubuntu-latest
       needs: deploy-testing
       environment: production 
+      # UPDATED: The 3-scenario logic gate
       if: |
         always() && 
         !cancelled() &&
         (
           (
             github.event_name == 'pull_request' && 
+            github.event.action == 'closed' &&
             github.event.pull_request.merged == true && 
             github.base_ref == 'dev' && 
             needs.deploy-testing.result == 'success' &&
             contains(github.event.pull_request.labels.*.name, 'Approved for Prod')
           ) 
+          ||
+          (
+            github.event_name == 'pull_request' &&
+            github.event.action == 'labeled' &&
+            github.event.pull_request.merged == true &&
+            github.event.label.name == 'Approved for Prod'
+          )
           ||
           (
             github.event_name == 'workflow_dispatch' &&
@@ -384,40 +381,31 @@ jobs:
             echo "History of the past 5 commits are shown:"
             git log -n 5 --oneline
             
-        - name: Download Build Artifact (PR Merge Only)
-          if: github.event_name == 'pull_request'
+        - name: Download Build Artifact (Initial Merge Only)
+          # UPDATED: Only try to download the artifact if the build-branch job actually ran
+          if: github.event_name == 'pull_request' && github.event.action == 'closed'
           uses: actions/download-artifact@v4
           with:
             name: vite-build-artifact
             path: dist/
 
-        - name: Setup Node.js (Manual Trigger Only)
-          if: github.event_name == 'workflow_dispatch'
+        - name: Setup Node.js (Manual Trigger or Post-Merge Label)
+          # UPDATED: Setup Node locally if we are missing the artifact due to a label event
+          if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled')
           uses: actions/setup-node@v4
           with:
             node-version: '24'
 
-        - name: Install and Build (Manual Trigger Only)
-          if: github.event_name == 'workflow_dispatch'
+        - name: Install and Build (Manual Trigger or Post-Merge Label)
+          # UPDATED: Run the fresh build natively in this job if it's a hotfix or post-merge label
+          if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled')
           run: |
             MODE="${{ inputs.deploy_mode }}"
             echo "Running fresh build for Production ($MODE mode)..."
             npm install
             npm run build
-            
-        # - name: Deploy to Production Environment
-        #   uses: easingthemes/ssh-deploy@v5.0.3
-        #   with:
-        #     REMOTE_HOST: 51.79.231.192
-        #     REMOTE_USER: ubuntu
-        #     SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        #     SOURCE: "dist/"
-        #     TARGET: /home/ubuntu/truestates-api
-        #     SCRIPT_BEFORE: |
-        #       whoami
-        #     SCRIPT_AFTER: |
-        #       whoami 
-        #       pm2 restart /home/ubuntu/truestates-api/ecosystem.config.js --only truestates-api --update-env
-        - name: Deploying to testing env
+        
+        - name: Deploying to production env
+          # FIXED: Updated the echo statements to reflect production
           run: |
-            echo "deploying in dev...."
+            echo "deploying in prod...."
